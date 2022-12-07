@@ -1,5 +1,6 @@
 coqa
 .vscode
+span
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
