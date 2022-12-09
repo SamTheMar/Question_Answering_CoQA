@@ -1,4 +1,4 @@
-def prepare_train_features(examples, tokenizer, max_length=380, doc_stride=128):
+def prepare_train_features_span(examples, tokenizer, max_length=380, doc_stride=128):
     """Tokenize our examples with truncation and padding, but keep the overflows using a
     stride.
 
@@ -11,7 +11,7 @@ def prepare_train_features(examples, tokenizer, max_length=380, doc_stride=128):
 
     Parameters
     ----------
-    examples : datasets.DatasetDict
+    examples : datasets.Dataset
     tokenizer : transformers.PreTrainedTokenizer | transformers.PreTrainedTokenizerFast
         pretrained tokenizer for the model for which to use the features.
     max_length : int, optional
@@ -21,8 +21,13 @@ def prepare_train_features(examples, tokenizer, max_length=380, doc_stride=128):
 
     Returns
     -------
-    datasets.DatasetDict
-        tokenized examples.
+    datasets.Dataset | datasets.DatasetDict
+        depending where map was called from tokenized examples.
+        At the end, the additional features will be:
+         - ``'input_ids'``
+         - ``'attention_mask'``
+         - ``'start_positions'``: index of the starting token of the answer span
+         - ``'end_positions'``: index of the final token of the answer span
     """
     question = [q.lstrip() for q in examples["question"]]
     story = [c.lstrip() for c in examples["story"]]
@@ -97,3 +102,52 @@ def prepare_train_features(examples, tokenizer, max_length=380, doc_stride=128):
             tokenized_examples["end_positions"].append(token_end_index + 1)
 
     return tokenized_examples
+
+
+def prepare_train_features_sequence_to_sequence(examples, tokenizer, encoder_max_length=380, decoder_max_length=128):
+    """Tokenize our examples. The example is just truncated if the
+
+    To be used in the map method of ``datasets.DatasetDict``. Before using it, fix all the
+    parameters using ``functools.partial``.
+
+    Parameters
+    ----------
+    examples : datasets.Dataset
+    tokenizer : transformers.PreTrainedTokenizer | transformers.PreTrainedTokenizerFast
+        pretrained tokenizer for the model for which to use the features.
+    encoder_max_length : int, optional
+        maximum length of the tokenization of the encoder input, by default 380.
+    decoder_max_length : int, optional
+        maximum length of the tokenization of the decoder input, by default 128.
+
+    Returns
+    -------
+    datasets.Dataset | datasets.DatasetDict
+        tokenized examples. At the end, the additional features will be:
+         - ``'input_ids'``
+         - ``'attention_mask'``
+         - ``'decoder_input_ids'``
+         - ``'decoder_attention_mask'``
+         - ``'labels'``
+    """
+    question = [q.lstrip() for q in examples["question"]]
+    story = [c.lstrip() for c in examples["story"]]
+    answer = [a.lstrip() for a in examples["answer"]]
+
+    # tokenize the inputs and story
+    tokenized_inputs = tokenizer(question, story, truncation="only_second", max_length=encoder_max_length, padding="max_length")
+
+    # tokenize the answers
+    tokenized_outputs = tokenizer(answer, truncation=True, max_length=decoder_max_length, padding="max_length")
+
+    examples["input_ids"] = tokenized_inputs.input_ids
+    examples["attention_mask"] = tokenized_inputs.attention_mask
+    examples["decoder_input_ids"] = tokenized_outputs.input_ids
+    examples["decoder_attention_mask"] = tokenized_outputs.attention_mask
+    examples["labels"] = tokenized_outputs.input_ids.copy()
+
+    # because BERT automatically shifts the labels, the labels correspond exactly to `decoder_input_ids`. 
+    # We have to make sure that the PAD token is ignored
+    examples["labels"] = [[-100 if token == tokenizer.pad_token_id else token for token in labels] for labels in examples["labels"]]
+
+    return examples
